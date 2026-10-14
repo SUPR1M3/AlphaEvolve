@@ -157,7 +157,7 @@ Same settings (`--migration-interval 10`), with `--rng-seed` 1, 2 and 3. Step 5 
 ## Limitations and next steps
 
 - **Small samples.** 50 iterations and 3 seeds per setup is too little to separate methods with this much variance.
-- **Step 6 isn't implemented.** On a single M2 GPU, generation dominates the time (about 70 s per iteration against at most 1.5 s of evaluation). An evaluation cascade would save under 2%, and parallel requests have to share the same GPU. This pays off on a GPU server or an API.
+- **Currently Implemented for CPU compute** On a single M2 GPU, generation dominates the time (about 70 s per iteration against at most 1.5 s of evaluation). An evaluation cascade would save under 2%, and parallel requests have to share the same GPU. This pays off on a GPU server or an API.
 - **Possible next steps:**
   - restart evolution from the 2.521 program to test whether the loop can close the gap to 2.635
   - add the common SLSQP pitfalls to the prompt to raise the valid rate
