@@ -1,10 +1,4 @@
-"""The "policy": anything that maps a prompt to a completion.
-
-Two backends:
-  - openai:    any OpenAI-compatible server, e.g. vLLM serving Qwen3
-               (`vllm serve Qwen/Qwen3-8B --port 8000`)
-  - anthropic: the Claude API (reads ANTHROPIC_API_KEY or an `ant auth login` profile)
-"""
+import re
 from dataclasses import dataclass
 
 SYSTEM_PROMPT = (
@@ -12,7 +6,6 @@ SYSTEM_PROMPT = (
     "You improve Python programs through precise, minimal code edits."
 )
 
-# Models that accept the server-side refusal fallback ("default" form).
 _FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 
@@ -21,26 +14,38 @@ class Completion:
     text: str
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning: str = ""  #model's thinking, useful for logging/as RL data for ThetaEvolve down the line
 
 
 class OpenAICompatPolicy:
     def __init__(self, model: str, base_url: str = "http://localhost:8000/v1",
-                 temperature: float = 0.8, max_tokens: int = 8192):
+                 temperature: float = 0.8, max_tokens: int = 8192, no_think: bool = False):
         from openai import OpenAI
-        self.client = OpenAI(base_url=base_url, api_key="EMPTY")
+        #Bigger timer and no restart for local generation since it can be slow
+        self.client = OpenAI(base_url=base_url, api_key="EMPTY", timeout=1800, max_retries=0)
         self.model, self.temperature, self.max_tokens = model, temperature, max_tokens
+        self.no_think = no_think
 
     def generate(self, prompt: str) -> Completion:
+        extra = {}
+        if self.no_think:
+            extra = dict(reasoning_effort="none",
+                         extra_body={"chat_template_kwargs": {"enable_thinking": False}})
         r = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            **extra,
         )
         u = r.usage
-        return Completion(r.choices[0].message.content or "",
-                          u.prompt_tokens if u else 0, u.completion_tokens if u else 0)
+        msg = r.choices[0].message
+        raw = msg.content or ""
+        text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+        reasoning = (msg.model_extra or {}).get("reasoning") or "".join(re.findall(r"<think>(.*?)</think>", raw, re.DOTALL))
+        return Completion(text.strip(), u.prompt_tokens if u else 0, u.completion_tokens if u else 0,
+                          reasoning.strip())
 
 
 class AnthropicPolicy:
@@ -68,9 +73,9 @@ class AnthropicPolicy:
         return Completion(text, r.usage.input_tokens, r.usage.output_tokens)
 
 
-def make_policy(backend: str, model: str | None = None, base_url: str | None = None):
+def make_policy(backend: str, model: str | None = None, base_url: str | None = None, no_think: bool = False):
     if backend == "anthropic":
         return AnthropicPolicy(model or "claude-opus-5-5")
     if backend == "openai":
-        return OpenAICompatPolicy(model or "Qwen/Qwen3-8B", base_url or "http://localhost:8000/v1")
+        return OpenAICompatPolicy(model or "Qwen/Qwen3-8B", base_url or "http://localhost:8000/v1", no_think=no_think)
     raise ValueError(f"unknown backend {backend!r}")
